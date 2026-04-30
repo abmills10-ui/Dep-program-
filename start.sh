@@ -5,7 +5,13 @@ ROOT="$(cd "$(dirname "$0")" && pwd)"
 
 echo "=== Installing backend dependencies ==="
 cd "$ROOT/backend"
-pip install -r requirements.txt -q
+# Use pip3 if pip is not available (common on macOS)
+PIP=$(which pip3 2>/dev/null || which pip 2>/dev/null)
+if [ -z "$PIP" ]; then
+  echo "ERROR: pip/pip3 not found. Install Python 3 from https://python.org"
+  exit 1
+fi
+$PIP install -r requirements.txt -q
 
 echo "=== Installing frontend dependencies ==="
 cd "$ROOT/frontend"
@@ -19,7 +25,7 @@ echo ""
 
 # Start backend in background
 cd "$ROOT/backend"
-uvicorn main:app --reload --port 8000 &
+python3 -m uvicorn main:app --reload --port 8000 &
 BACKEND_PID=$!
 
 # Start frontend
