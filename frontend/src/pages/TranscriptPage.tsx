@@ -82,8 +82,16 @@ export default function TranscriptPage() {
     const cr = container.getBoundingClientRect();
 
     const range = sel.getRangeAt(0);
-    const clientRects = Array.from(range.getClientRects()).filter(r => r.width > 1 && r.height > 1);
-    if (clientRects.length === 0) return;
+    const allRects = Array.from(range.getClientRects()).filter(r => r.width > 1 && r.height > 1);
+    if (allRects.length === 0) return;
+
+    // Filter out whitespace-gap rects: they are significantly taller than
+    // the typical text-line rect. Use median height as the baseline and drop
+    // anything more than 1.6× that — those are inter-line "jump" artefacts.
+    const sortedH = allRects.map(r => r.height).sort((a, b) => a - b);
+    const medianH = sortedH[Math.floor(sortedH.length / 2)];
+    const textRects = allRects.filter(r => r.height <= medianH * 1.6);
+    const clientRects = textRects.length > 0 ? textRects : allRects;
 
     // Normalize rects to 0–1 fractions of the page container
     const rects: HighlightRect[] = clientRects.map(r => ({

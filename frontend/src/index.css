@@ -198,10 +198,18 @@ a { color: inherit; text-decoration: none; }
   box-shadow: 0 4px 24px rgba(0,0,0,.5);
 }
 
-/* Make the text layer selectable with correct cursor */
-.pdf-scroll-area .react-pdf__Page__textContent {
-  user-select: text;
-  cursor: text;
+/*
+ * Fix: prevent selection from jumping across whitespace between PDF text lines.
+ * The .textLayer container is made non-selectable; only the actual <span>
+ * elements (which hold the real text) remain selectable. Dragging the cursor
+ * into the gap between lines now stops the selection at the last text span
+ * rather than leaping to the next line — matching Adobe Acrobat behaviour.
+ */
+.textLayer {
+  user-select: none !important;
+}
+.textLayer span {
+  user-select: text !important;
 }
 
 /* Plain-text viewer */
