@@ -32,18 +32,24 @@ app.add_middleware(
 
 @app.on_event("startup")
 def migrate_db():
-    """Add new columns to existing tables without losing data."""
     with engine.connect() as conn:
-        for stmt in [
-            "ALTER TABLE depositions ADD COLUMN file_path TEXT DEFAULT ''",
-            "ALTER TABLE tags ADD COLUMN selected_text TEXT DEFAULT ''",
-            "ALTER TABLE tags ADD COLUMN rects_json TEXT DEFAULT '[]'",
-        ]:
-            try:
-                conn.execute(text(stmt))
-                conn.commit()
-            except Exception:
-                pass  # column already exists
+        # Check if tags table has the new schema (selected_text column)
+        tag_cols = {row[1] for row in conn.execute(text("PRAGMA table_info(tags)"))}
+        if "selected_text" not in tag_cols:
+            # Old schema has NOT NULL segment index columns that block inserts.
+            # Drop and let create_all rebuild with the new schema.
+            conn.execute(text("DROP TABLE IF EXISTS tags"))
+            conn.execute(text("DROP TABLE IF EXISTS transcript_segments"))
+            conn.commit()
+
+        # Add file_path to depositions if it doesn't exist yet
+        dep_cols = {row[1] for row in conn.execute(text("PRAGMA table_info(depositions)"))}
+        if "file_path" not in dep_cols:
+            conn.execute(text("ALTER TABLE depositions ADD COLUMN file_path TEXT DEFAULT ''"))
+            conn.commit()
+
+    # Recreate any missing tables (no-op for tables that already exist)
+    models.Base.metadata.create_all(bind=engine)
 
 
 # ── Schemas ───────────────────────────────────────────────────────────────────
