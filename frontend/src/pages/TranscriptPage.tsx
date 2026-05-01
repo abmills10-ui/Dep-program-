@@ -133,7 +133,32 @@ function extractRange(
   return { text, rects };
 }
 
-// ── component ─────────────────────────────────────────────────────────────────
+function extractRangeMultiPage(
+  pageRefs: React.MutableRefObject<(HTMLDivElement | null)[]>,
+  startPageIndex: number,
+  startTopFrac: number,
+  endPageIndex: number,
+  endBottomFrac: number,
+): { text: string; rects: HighlightRect[] } | null {
+  const allText: string[] = [];
+  const allRects: HighlightRect[] = [];
+
+  for (let pi = startPageIndex; pi <= endPageIndex; pi++) {
+    const container = pageRefs.current[pi];
+    if (!container) continue;
+    const minFrac = pi === startPageIndex ? startTopFrac : 0;
+    const maxFrac = pi === endPageIndex   ? endBottomFrac : 1;
+    const result = extractRange(container, pi, minFrac, maxFrac);
+    if (result) {
+      if (result.text) allText.push(result.text);
+      allRects.push(...result.rects);
+    }
+  }
+
+  if (allText.length === 0) return null;
+  return { text: allText.join("\n"), rects: allRects };
+}
+
 
 export default function TranscriptPage() {
   const { caseId, depId } = useParams<{ caseId: string; depId: string }>();
@@ -179,11 +204,8 @@ export default function TranscriptPage() {
   // ── click handlers ────────────────────────────────────────────────────────
 
   const handlePageClick = (e: React.MouseEvent, pageIndex: number) => {
-    // If there's a pending selection waiting to be tagged, a new click starts fresh
     if (pending) {
-      setPending(null);
-      setClickStart(null);
-      setHoverLine(null);
+      setPending(null); setClickStart(null); setHoverLine(null);
     }
 
     const container = pageRefs.current[pageIndex];
@@ -191,25 +213,35 @@ export default function TranscriptPage() {
     const line = findLineAtClientY(container, e.clientY);
     if (!line) return;
 
-    if (!clickStart || clickStart.pageIndex !== pageIndex) {
-      // First click — mark start line
+    if (!clickStart) {
+      // First click — mark start
       setClickStart({ pageIndex, ...line });
       setHoverLine(null);
     } else {
-      // Second click — finalize selection
-      const minTop    = Math.min(clickStart.topFrac,    line.topFrac);
-      const maxBottom = Math.max(clickStart.bottomFrac, line.bottomFrac);
-      const result = extractRange(container, pageIndex, minTop, maxBottom);
+      // Second click — finalize selection (same page or cross-page)
+      let result: { text: string; rects: HighlightRect[] } | null = null;
+
+      if (clickStart.pageIndex === pageIndex) {
+        const minTop    = Math.min(clickStart.topFrac,    line.topFrac);
+        const maxBottom = Math.max(clickStart.bottomFrac, line.bottomFrac);
+        result = extractRange(container, pageIndex, minTop, maxBottom);
+      } else {
+        // Determine reading order (allow clicking end before start)
+        const [sp, sFrac, ep, eFrac] = clickStart.pageIndex < pageIndex
+          ? [clickStart.pageIndex, clickStart.topFrac, pageIndex, line.bottomFrac]
+          : [pageIndex, line.topFrac, clickStart.pageIndex, clickStart.bottomFrac];
+        result = extractRangeMultiPage(pageRefs, sp, sFrac, ep, eFrac);
+      }
+
       if (result && result.text) {
         setPending({ ...result, buttonX: e.clientX, buttonY: e.clientY + 10 });
       }
-      setClickStart(null);
-      setHoverLine(null);
+      setClickStart(null); setHoverLine(null);
     }
   };
 
   const handlePageMouseMove = (e: React.MouseEvent, pageIndex: number) => {
-    if (!clickStart || clickStart.pageIndex !== pageIndex) return;
+    if (!clickStart) return;
     const container = pageRefs.current[pageIndex];
     if (!container) return;
     const line = findLineAtClientY(container, e.clientY);
@@ -262,44 +294,67 @@ export default function TranscriptPage() {
   // ── selection overlay helpers ─────────────────────────────────────────────
 
   function selectionOverlay(pageIndex: number) {
-    if (!clickStart || clickStart.pageIndex !== pageIndex) return null;
+    if (!clickStart) return null;
 
-    const previewTop    = hoverLine
-      ? Math.min(clickStart.topFrac,    hoverLine.topFrac)
-      : clickStart.topFrac;
-    const previewBottom = hoverLine
-      ? Math.max(clickStart.bottomFrac, hoverLine.bottomFrac)
-      : clickStart.bottomFrac;
+    const startPage = clickStart.pageIndex;
+    const hoverPage = hoverLine?.pageIndex ?? startPage;
 
-    return (
-      <div style={{ position: "absolute", inset: 0, pointerEvents: "none" }}>
-        {/* Full range preview */}
-        <div style={{
-          position: "absolute", left: 0, width: "100%",
-          top:    `${previewTop    * 100}%`,
-          height: `${(previewBottom - previewTop) * 100}%`,
-          background: "rgba(59,130,246,0.15)",
-        }} />
-        {/* Start-line solid marker */}
-        <div style={{
-          position: "absolute", left: 0, width: "100%",
-          top:    `${clickStart.topFrac    * 100}%`,
-          height: `${(clickStart.bottomFrac - clickStart.topFrac) * 100}%`,
-          background: "rgba(59,130,246,0.30)",
-          borderLeft: "3px solid #3b82f6",
-        }} />
-        {/* End-line hover marker */}
-        {hoverLine && (
-          <div style={{
-            position: "absolute", left: 0, width: "100%",
-            top:    `${hoverLine.topFrac    * 100}%`,
-            height: `${(hoverLine.bottomFrac - hoverLine.topFrac) * 100}%`,
-            background: "rgba(59,130,246,0.30)",
-            borderLeft: "3px solid #3b82f6",
-          }} />
-        )}
-      </div>
-    );
+    // Determine reading order for multi-page
+    const [firstPage, lastPage] = startPage <= hoverPage
+      ? [startPage, hoverPage]
+      : [hoverPage, startPage];
+
+    const isStart  = pageIndex === startPage;
+    const isEnd    = pageIndex === hoverPage;
+    const isMiddle = pageIndex > firstPage && pageIndex < lastPage;
+
+    if (!isStart && !isEnd && !isMiddle) return null;
+
+    const LIGHT = "rgba(59,130,246,0.15)";
+    const SOLID = "rgba(59,130,246,0.30)";
+    const BORDER = "3px solid #3b82f6";
+
+    if (firstPage === lastPage && isStart && isEnd) {
+      // Single-page selection (original behaviour)
+      const previewTop    = hoverLine ? Math.min(clickStart.topFrac, hoverLine.topFrac) : clickStart.topFrac;
+      const previewBottom = hoverLine ? Math.max(clickStart.bottomFrac, hoverLine.bottomFrac) : clickStart.bottomFrac;
+      return (
+        <div style={{ position: "absolute", inset: 0, pointerEvents: "none" }}>
+          <div style={{ position: "absolute", left: 0, width: "100%", top: `${previewTop * 100}%`, height: `${(previewBottom - previewTop) * 100}%`, background: LIGHT }} />
+          <div style={{ position: "absolute", left: 0, width: "100%", top: `${clickStart.topFrac * 100}%`, height: `${(clickStart.bottomFrac - clickStart.topFrac) * 100}%`, background: SOLID, borderLeft: BORDER }} />
+          {hoverLine && <div style={{ position: "absolute", left: 0, width: "100%", top: `${hoverLine.topFrac * 100}%`, height: `${(hoverLine.bottomFrac - hoverLine.topFrac) * 100}%`, background: SOLID, borderLeft: BORDER }} />}
+        </div>
+      );
+    }
+
+    // Multi-page overlays
+    if (isMiddle) {
+      return <div style={{ position: "absolute", inset: 0, pointerEvents: "none" }}><div style={{ position: "absolute", inset: 0, background: LIGHT }} /></div>;
+    }
+
+    if (isStart) {
+      const top = pageIndex === firstPage ? clickStart.topFrac : (hoverLine?.topFrac ?? 0);
+      return (
+        <div style={{ position: "absolute", inset: 0, pointerEvents: "none" }}>
+          <div style={{ position: "absolute", left: 0, width: "100%", top: `${top * 100}%`, height: `${(1 - top) * 100}%`, background: LIGHT }} />
+          <div style={{ position: "absolute", left: 0, width: "100%", top: `${top * 100}%`, height: `${(clickStart.bottomFrac - clickStart.topFrac) * 100}%`, background: SOLID, borderLeft: BORDER }} />
+        </div>
+      );
+    }
+
+    if (isEnd) {
+      const bottom = pageIndex === lastPage ? (hoverLine?.bottomFrac ?? 1) : clickStart.bottomFrac;
+      const lineTop = pageIndex === lastPage ? (hoverLine?.topFrac ?? 0) : clickStart.topFrac;
+      const lineBot = pageIndex === lastPage ? (hoverLine?.bottomFrac ?? 0) : clickStart.bottomFrac;
+      return (
+        <div style={{ position: "absolute", inset: 0, pointerEvents: "none" }}>
+          <div style={{ position: "absolute", left: 0, width: "100%", top: 0, height: `${bottom * 100}%`, background: LIGHT }} />
+          <div style={{ position: "absolute", left: 0, width: "100%", top: `${lineTop * 100}%`, height: `${(lineBot - lineTop) * 100}%`, background: SOLID, borderLeft: BORDER }} />
+        </div>
+      );
+    }
+
+    return null;
   }
 
   // ── render ────────────────────────────────────────────────────────────────
@@ -351,8 +406,8 @@ export default function TranscriptPage() {
           <hr style={{ margin: "1rem 0", borderColor: "#eee" }} />
           <p style={{ fontSize: ".78rem", color: "#888", lineHeight: 1.55 }}>
             {clickStart
-              ? <><strong style={{ color: "#3b82f6" }}>Click a second line</strong> to finish the selection.</>
-              : <>Click a line to <strong>start</strong> a selection, then click another line to <strong>end</strong> it.</>
+              ? <><strong style={{ color: "#3b82f6" }}>Scroll to any page</strong> and click the end line to finish.</>
+              : <>Click a line to <strong>start</strong>, then click any line on any page to <strong>end</strong> the selection.</>
             }
           </p>
         </div>
@@ -365,7 +420,7 @@ export default function TranscriptPage() {
               <span style={{ fontSize: ".85rem", minWidth: 44, textAlign: "center" }}>{Math.round(scale * 100)}%</span>
               <button className="btn btn-ghost btn-sm" onClick={() => setScale(s => Math.min(3.0, +(s + 0.15).toFixed(2)))}>+</button>
               {clickStart
-                ? <span style={{ fontSize: ".8rem", color: "#3b82f6", marginLeft: ".75rem", fontWeight: 600 }}>Click a second line to complete selection</span>
+                ? <span style={{ fontSize: ".8rem", color: "#3b82f6", marginLeft: ".75rem", fontWeight: 600 }}>Scroll to any page and click the end line</span>
                 : <span style={{ fontSize: ".8rem", color: "#999", marginLeft: ".75rem" }}>Click any line to start a selection</span>
               }
               {clickStart && (

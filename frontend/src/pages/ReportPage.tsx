@@ -1,52 +1,55 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Link, useParams, useSearchParams } from "react-router-dom";
 import { getIssues, getReport, getCase } from "../api";
 import type { Issue, Report, Case, HighlightRect } from "../types";
 
 function buildCitation(witnessName: string, depoDate: string, selectedText: string, rectsJson: string): string {
-  // Last name only
   const lastName = witnessName.trim().split(/\s+/).pop() ?? witnessName;
 
-  // Format date as "Mar. 27, 2024"
   let dateStr = "";
   if (depoDate) {
     const d = new Date(depoDate.includes("T") ? depoDate : depoDate + "T12:00:00");
     if (!isNaN(d.getTime())) {
       const raw = d.toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" });
-      // "Mar 27, 2024" → "Mar. 27, 2024"
       dateStr = raw.replace(/^(\w{3}) /, "$1. ");
     } else {
       dateStr = depoDate;
     }
   }
 
-  // Page numbers from rects (pageIndex is 0-based)
   let rects: HighlightRect[] = [];
   try { rects = JSON.parse(rectsJson); } catch { /* ignore */ }
   const startPage = rects.length > 0 ? rects[0].pageIndex + 1 : null;
   const endPage   = rects.length > 0 ? rects[rects.length - 1].pageIndex + 1 : null;
 
-  // Line numbers: each line of selected_text begins with its transcript line number
   const lines = selectedText.split("\n").map(l => l.trim()).filter(Boolean);
-  const firstLineMatch = lines[0]?.match(/^(\d+)/);
-  const lastLineMatch  = lines[lines.length - 1]?.match(/^(\d+)/);
-  const startLine = firstLineMatch ? parseInt(firstLineMatch[1]) : null;
-  const endLine   = lastLineMatch  ? parseInt(lastLineMatch[1])  : null;
+  const startLine = parseInt(lines[0]?.match(/^(\d+)/)?.[1] ?? "0") || null;
+  const endLine   = parseInt(lines[lines.length - 1]?.match(/^(\d+)/)?.[1] ?? "0") || null;
 
   let pageRange = "";
   if (startPage !== null && endPage !== null) {
     if (startPage === endPage) {
-      pageRange = startLine && endLine
-        ? `${startPage}:${startLine}-${endLine}`
-        : `${startPage}`;
+      pageRange = startLine && endLine ? `${startPage}:${startLine}-${endLine}` : `${startPage}`;
     } else {
-      pageRange = startLine && endLine
-        ? `${startPage}:${startLine}-${endPage}:${endLine}`
-        : `${startPage}-${endPage}`;
+      pageRange = startLine && endLine ? `${startPage}:${startLine}-${endPage}:${endLine}` : `${startPage}-${endPage}`;
     }
   }
 
   return [lastName, dateStr, "Dep. Tr.", pageRange].filter(Boolean).join(" ");
+}
+
+async function fetchProposition(witnessName: string, selectedText: string, citation: string): Promise<string> {
+  const res = await fetch("/api/proposition", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ witness_name: witnessName, selected_text: selectedText, citation }),
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err.detail ?? "Failed to generate proposition");
+  }
+  const data = await res.json();
+  return data.parenthetical as string;
 }
 
 export default function ReportPage() {
@@ -62,6 +65,11 @@ export default function ReportPage() {
   const [report, setReport] = useState<Report | null>(null);
   const [loading, setLoading] = useState(false);
 
+  // AI proposition state
+  const [showPropositions, setShowPropositions] = useState(false);
+  const [propositions, setPropositions] = useState<Record<number, string | "loading" | "error">>({});
+  const fetchingRef = useRef(false);
+
   useEffect(() => {
     Promise.all([getCase(cId), getIssues(cId)]).then(([c, iss]) => {
       setCaseData(c);
@@ -74,10 +82,41 @@ export default function ReportPage() {
     if (selectedIssueId === "") return;
     setLoading(true);
     setSearchParams({ issue: String(selectedIssueId) });
+    setPropositions({});
+    setShowPropositions(false);
     getReport(cId, Number(selectedIssueId))
       .then(setReport)
       .finally(() => setLoading(false));
   }, [selectedIssueId]);
+
+  const loadPropositions = async (r: Report) => {
+    if (fetchingRef.current) return;
+    fetchingRef.current = true;
+    setShowPropositions(true);
+
+    // Kick off all in parallel
+    const fetches = r.passages.map(async p => {
+      setPropositions(prev => ({ ...prev, [p.tag_id]: "loading" }));
+      try {
+        const citation = buildCitation(p.witness_name, p.deposition_date, p.selected_text, p.rects_json);
+        const text = await fetchProposition(p.witness_name, p.selected_text, citation);
+        setPropositions(prev => ({ ...prev, [p.tag_id]: text }));
+      } catch {
+        setPropositions(prev => ({ ...prev, [p.tag_id]: "error" }));
+      }
+    });
+    await Promise.all(fetches);
+    fetchingRef.current = false;
+  };
+
+  const togglePropositions = () => {
+    if (!report) return;
+    if (showPropositions) {
+      setShowPropositions(false);
+    } else {
+      loadPropositions(report);
+    }
+  };
 
   // Group passages by deposition
   const grouped: Record<string, Report["passages"]> = {};
@@ -92,7 +131,7 @@ export default function ReportPage() {
   const selectedIssue = issues.find(i => i.id === selectedIssueId);
 
   return (
-    <main className="page" style={{ maxWidth: 860 }}>
+    <main className="page" style={{ maxWidth: showPropositions ? 1200 : 860 }}>
       {/* Breadcrumb */}
       <div style={{ marginBottom: ".75rem", fontSize: ".85rem" }}>
         <Link to="/" style={{ color: "#1c6ea4" }}>Cases</Link>
@@ -112,6 +151,17 @@ export default function ReportPage() {
         >
           {issues.map(iss => <option key={iss.id} value={iss.id}>{iss.name}</option>)}
         </select>
+
+        {report && report.passages.length > 0 && (
+          <button
+            className={`btn ${showPropositions ? "btn-primary" : "btn-ghost"}`}
+            onClick={togglePropositions}
+            title="Generate AI propositions for each passage"
+          >
+            {showPropositions ? "Hide AI propositions" : "Show AI propositions"}
+          </button>
+        )}
+
         <button className="btn btn-ghost" style={{ marginLeft: "auto" }} onClick={() => window.print()}>
           Print / Save PDF
         </button>
@@ -120,14 +170,12 @@ export default function ReportPage() {
       {/* Issue summary bar */}
       {report && selectedIssue && (
         <div style={{
-          borderLeft: `5px solid ${selectedIssue.color}`,
-          paddingLeft: "1rem",
-          marginBottom: "2rem",
           background: "#fff",
           border: `1px solid ${selectedIssue.color}`,
           borderLeftWidth: 5,
           borderRadius: "0 6px 6px 0",
           padding: ".75rem 1rem",
+          marginBottom: "2rem",
         }}>
           <div style={{ fontWeight: "bold", fontSize: "1.1rem", color: selectedIssue.color }}>
             {report.issue.name}
@@ -162,88 +210,108 @@ export default function ReportPage() {
           <div key={key} style={{ marginBottom: "2.5rem" }}>
             {/* Deposition header */}
             <div style={{
-              background: "#1c2b3a",
-              color: "#fff",
-              padding: ".55rem 1rem",
-              borderRadius: "4px 4px 0 0",
-              fontWeight: "bold",
-              fontSize: ".9rem",
-              display: "flex",
-              alignItems: "center",
-              justifyContent: "space-between",
+              background: "#1c2b3a", color: "#fff",
+              padding: ".55rem 1rem", borderRadius: "4px 4px 0 0",
+              fontWeight: "bold", fontSize: ".9rem",
+              display: "flex", alignItems: "center", justifyContent: "space-between",
             }}>
               <span>
                 Deposition of {witnessName.toUpperCase()}
                 {depoDate && <span style={{ fontWeight: "normal", marginLeft: ".75rem", color: "#aad" }}>{depoDate}</span>}
               </span>
-              <Link
-                to={`/cases/${cId}/depositions/${depId}`}
-                style={{ color: "#7ab3e0", fontSize: ".8rem", fontWeight: "normal" }}
-              >
+              <Link to={`/cases/${cId}/depositions/${depId}`} style={{ color: "#7ab3e0", fontSize: ".8rem", fontWeight: "normal" }}>
                 Open transcript ↗
               </Link>
             </div>
 
             {/* Passages */}
             <div style={{ border: "1px solid #ddd", borderTop: "none", borderRadius: "0 0 4px 4px", overflow: "hidden" }}>
-              {passages.map((passage, pi) => (
-                <div key={passage.tag_id}>
-                  {pi > 0 && <div style={{ height: 1, background: "#eee" }} />}
+              {passages.map((passage, pi) => {
+                const citation = buildCitation(passage.witness_name, passage.deposition_date, passage.selected_text, passage.rects_json);
+                const prop = propositions[passage.tag_id];
 
-                  {/* Issue color tab + testimony */}
-                  <div style={{ display: "flex" }}>
-                    <div style={{ width: 4, flexShrink: 0, background: selectedIssue?.color ?? "#ccc" }} />
-                    <div style={{ flex: 1, padding: "1rem 1.25rem" }}>
+                return (
+                  <div key={passage.tag_id}>
+                    {pi > 0 && <div style={{ height: 1, background: "#eee" }} />}
 
-                      {/* Optional note */}
-                      {passage.note && (
-                        <div style={{
-                          background: "#fffbeb",
-                          border: "1px solid #fde68a",
-                          borderRadius: "4px",
-                          padding: ".4rem .75rem",
-                          fontSize: ".82rem",
-                          color: "#92400e",
-                          marginBottom: ".75rem",
-                        }}>
-                          <strong>Note:</strong> {passage.note}
-                        </div>
-                      )}
+                    <div style={{ display: "flex" }}>
+                      {/* Issue color tab */}
+                      <div style={{ width: 4, flexShrink: 0, background: selectedIssue?.color ?? "#ccc" }} />
 
-                      {/* Citation */}
-                      {(() => {
-                        const citation = buildCitation(passage.witness_name, passage.deposition_date, passage.selected_text, passage.rects_json);
-                        return citation ? (
+                      <div style={{ flex: 1, padding: "1rem 1.25rem" }}>
+                        {/* Optional note */}
+                        {passage.note && (
                           <div style={{
-                            fontFamily: "'Georgia', serif",
-                            fontStyle: "italic",
-                            fontSize: ".82rem",
-                            color: "#666",
-                            marginBottom: ".4rem",
+                            background: "#fffbeb", border: "1px solid #fde68a",
+                            borderRadius: "4px", padding: ".4rem .75rem",
+                            fontSize: ".82rem", color: "#92400e", marginBottom: ".75rem",
                           }}>
-                            {citation}
+                            <strong>Note:</strong> {passage.note}
                           </div>
-                        ) : null;
-                      })()}
+                        )}
 
-                      {/* Verbatim highlighted text — transcript style */}
-                      <div style={{
-                        fontFamily: "'Courier New', Courier, monospace",
-                        fontSize: ".88rem",
-                        lineHeight: 1.65,
-                        color: "#1a1a1a",
-                        whiteSpace: "pre-wrap",
-                        background: selectedIssue ? `${selectedIssue.color}18` : "#fffde7",
-                        borderLeft: `3px solid ${selectedIssue?.color ?? "#ccc"}`,
-                        borderRadius: "0 3px 3px 0",
-                        padding: ".65rem 1rem",
-                      }}>
-                        {passage.selected_text}
+                        {/* Two-column layout when propositions are shown */}
+                        <div style={{
+                          display: showPropositions ? "grid" : "block",
+                          gridTemplateColumns: "1fr 1fr",
+                          gap: "1.25rem",
+                          alignItems: "start",
+                        }}>
+                          {/* Left: verbatim testimony */}
+                          <div>
+                            {citation && (
+                              <div style={{ fontFamily: "'Georgia', serif", fontStyle: "italic", fontSize: ".82rem", color: "#666", marginBottom: ".4rem" }}>
+                                {citation}
+                              </div>
+                            )}
+                            <div style={{
+                              fontFamily: "'Courier New', Courier, monospace",
+                              fontSize: ".88rem", lineHeight: 1.65, color: "#1a1a1a",
+                              whiteSpace: "pre-wrap",
+                              background: selectedIssue ? `${selectedIssue.color}18` : "#fffde7",
+                              borderLeft: `3px solid ${selectedIssue?.color ?? "#ccc"}`,
+                              borderRadius: "0 3px 3px 0",
+                              padding: ".65rem 1rem",
+                            }}>
+                              {passage.selected_text}
+                            </div>
+                          </div>
+
+                          {/* Right: AI proposition (only when toggled) */}
+                          {showPropositions && (
+                            <div style={{
+                              background: "#f8f9fc",
+                              border: "1px solid #dde",
+                              borderRadius: "4px",
+                              padding: ".75rem 1rem",
+                              fontSize: ".88rem",
+                              lineHeight: 1.65,
+                              color: "#1a1a1a",
+                            }}>
+                              <div style={{ fontSize: ".73rem", fontWeight: 700, textTransform: "uppercase", letterSpacing: ".06em", color: "#888", marginBottom: ".5rem" }}>
+                                Proposition
+                              </div>
+                              {prop === "loading" && (
+                                <span style={{ color: "#aaa", fontStyle: "italic" }}>Generating…</span>
+                              )}
+                              {prop === "error" && (
+                                <span style={{ color: "#c00", fontStyle: "italic" }}>Could not generate — is ANTHROPIC_API_KEY set?</span>
+                              )}
+                              {prop && prop !== "loading" && prop !== "error" && (
+                                <span style={{ fontFamily: "'Georgia', serif" }}>
+                                  <span style={{ color: "#555" }}>{citation} (</span>
+                                  {prop}
+                                  <span style={{ color: "#555" }}>)</span>
+                                </span>
+                              )}
+                            </div>
+                          )}
+                        </div>
                       </div>
                     </div>
                   </div>
-                </div>
-              ))}
+                );
+              })}
             </div>
           </div>
         );

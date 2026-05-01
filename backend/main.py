@@ -4,6 +4,7 @@ import traceback
 from datetime import datetime
 from typing import List, Optional
 
+import anthropic
 from fastapi import FastAPI, Depends, HTTPException, UploadFile, File, Form, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, JSONResponse
@@ -362,3 +363,55 @@ def get_report(case_id: int, issue_id: int, db: Session = Depends(get_db)):
         ))
 
     return ReportOut(issue=IssueOut.model_validate(issue), passages=passages)
+
+
+# ── AI Proposition ────────────────────────────────────────────────────────────
+
+class PropositionRequest(BaseModel):
+    witness_name: str
+    selected_text: str
+    citation: str   # pre-formatted citation string, e.g. "Musk Mar. 27, 2024 Dep. Tr. 3:10-25"
+
+
+class PropositionOut(BaseModel):
+    parenthetical: str  # just the text inside the parentheses
+
+
+_PROPOSITION_PROMPT = """\
+You are a legal brief writer drafting parenthetical propositions for deposition citations.
+Given the transcript excerpt below, write the parenthetical portion of the citation — \
+the text that appears inside the parentheses after the citation.
+
+Follow these rules:
+1. If the selection is a short, complete Q&A exchange, quote it verbatim: Q. [question] A. [answer]
+2. If the selection is long, spans multiple Q&As, or the answer is lengthy, paraphrase \
+and splice in key verbatim phrases in quotation marks: testifying that "[phrase1]" and "[phrase2]"
+3. If the witness's answer mainly agrees with or adopts the questioner's language \
+(the key language is really in the question), use: agreeing that [paraphrase using questioner's words in quotes]
+
+Return ONLY the parenthetical content. Start with a lowercase word. No outer parentheses. Be concise.
+
+Witness: {witness_name}
+Transcript excerpt:
+{selected_text}
+"""
+
+
+@app.post("/api/proposition", response_model=PropositionOut)
+async def generate_proposition(body: PropositionRequest):
+    api_key = os.environ.get("ANTHROPIC_API_KEY", "")
+    if not api_key:
+        raise HTTPException(status_code=503, detail="ANTHROPIC_API_KEY not set — AI propositions unavailable")
+
+    client = anthropic.Anthropic(api_key=api_key)
+    prompt = _PROPOSITION_PROMPT.format(
+        witness_name=body.witness_name,
+        selected_text=body.selected_text,
+    )
+    message = client.messages.create(
+        model="claude-haiku-4-5-20251001",
+        max_tokens=300,
+        messages=[{"role": "user", "content": prompt}],
+    )
+    parenthetical = message.content[0].text.strip().strip("()")
+    return PropositionOut(parenthetical=parenthetical)
