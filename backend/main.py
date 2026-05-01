@@ -1,17 +1,18 @@
+import json
 import os
-import shutil
 from datetime import datetime
 from typing import List, Optional
 
 from fastapi import FastAPI, Depends, HTTPException, UploadFile, File, Form
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.staticfiles import StaticFiles
+from fastapi.responses import FileResponse
 from pydantic import BaseModel
+from sqlalchemy import text
 from sqlalchemy.orm import Session
 
 import models
 from database import engine, get_db
-from transcript_parser import parse_transcript, extract_text_from_pdf
+from transcript_parser import extract_text_from_pdf
 
 models.Base.metadata.create_all(bind=engine)
 
@@ -29,7 +30,23 @@ app.add_middleware(
 )
 
 
-# ── Pydantic schemas ──────────────────────────────────────────────────────────
+@app.on_event("startup")
+def migrate_db():
+    """Add new columns to existing tables without losing data."""
+    with engine.connect() as conn:
+        for stmt in [
+            "ALTER TABLE depositions ADD COLUMN file_path TEXT DEFAULT ''",
+            "ALTER TABLE tags ADD COLUMN selected_text TEXT DEFAULT ''",
+            "ALTER TABLE tags ADD COLUMN rects_json TEXT DEFAULT '[]'",
+        ]:
+            try:
+                conn.execute(text(stmt))
+                conn.commit()
+            except Exception:
+                pass  # column already exists
+
+
+# ── Schemas ───────────────────────────────────────────────────────────────────
 
 class CaseCreate(BaseModel):
     name: str
@@ -54,20 +71,10 @@ class DepositionOut(BaseModel):
     model_config = {"from_attributes": True}
 
 
-class SegmentOut(BaseModel):
-    id: int
-    segment_index: int
-    speaker: str
-    text: str
-    page_number: Optional[int]
-    line_number: Optional[int]
-    model_config = {"from_attributes": True}
-
-
 class IssueCreate(BaseModel):
     name: str
     description: str = ""
-    color: str = "#4CAF50"
+    color: str = "#FFD700"
 
 
 class IssueOut(BaseModel):
@@ -82,8 +89,8 @@ class IssueOut(BaseModel):
 
 class TagCreate(BaseModel):
     issue_id: int
-    start_segment_index: int
-    end_segment_index: int
+    selected_text: str
+    rects_json: str = "[]"   # JSON string of normalized highlight rects
     note: str = ""
 
 
@@ -91,8 +98,8 @@ class TagOut(BaseModel):
     id: int
     deposition_id: int
     issue_id: int
-    start_segment_index: int
-    end_segment_index: int
+    selected_text: str
+    rects_json: str
     note: str
     created_at: datetime
     issue: IssueOut
@@ -105,7 +112,7 @@ class ReportPassage(BaseModel):
     deposition_id: int
     tag_id: int
     note: str
-    segments: List[SegmentOut]
+    selected_text: str
 
 
 class ReportOut(BaseModel):
@@ -123,9 +130,7 @@ def list_cases(db: Session = Depends(get_db)):
 @app.post("/api/cases", response_model=CaseOut)
 def create_case(body: CaseCreate, db: Session = Depends(get_db)):
     case = models.Case(name=body.name, description=body.description)
-    db.add(case)
-    db.commit()
-    db.refresh(case)
+    db.add(case); db.commit(); db.refresh(case)
     return case
 
 
@@ -142,10 +147,8 @@ def update_case(case_id: int, body: CaseCreate, db: Session = Depends(get_db)):
     case = db.query(models.Case).filter(models.Case.id == case_id).first()
     if not case:
         raise HTTPException(status_code=404, detail="Case not found")
-    case.name = body.name
-    case.description = body.description
-    db.commit()
-    db.refresh(case)
+    case.name = body.name; case.description = body.description
+    db.commit(); db.refresh(case)
     return case
 
 
@@ -154,8 +157,7 @@ def delete_case(case_id: int, db: Session = Depends(get_db)):
     case = db.query(models.Case).filter(models.Case.id == case_id).first()
     if not case:
         raise HTTPException(status_code=404, detail="Case not found")
-    db.delete(case)
-    db.commit()
+    db.delete(case); db.commit()
     return {"ok": True}
 
 
@@ -163,12 +165,9 @@ def delete_case(case_id: int, db: Session = Depends(get_db)):
 
 @app.get("/api/cases/{case_id}/depositions", response_model=List[DepositionOut])
 def list_depositions(case_id: int, db: Session = Depends(get_db)):
-    return (
-        db.query(models.Deposition)
-        .filter(models.Deposition.case_id == case_id)
-        .order_by(models.Deposition.deposition_date)
-        .all()
-    )
+    return (db.query(models.Deposition)
+            .filter(models.Deposition.case_id == case_id)
+            .order_by(models.Deposition.deposition_date).all())
 
 
 @app.post("/api/cases/{case_id}/depositions", response_model=DepositionOut)
@@ -184,40 +183,24 @@ async def create_deposition(
         raise HTTPException(status_code=404, detail="Case not found")
 
     file_bytes = await file.read()
-    filename = file.filename or "transcript.txt"
-
-    if filename.lower().endswith(".pdf"):
-        try:
-            raw_text = extract_text_from_pdf(file_bytes)
-        except Exception as e:
-            raise HTTPException(status_code=400, detail=f"Could not parse PDF: {e}")
-    else:
-        try:
-            raw_text = file_bytes.decode("utf-8")
-        except UnicodeDecodeError:
-            raw_text = file_bytes.decode("latin-1")
+    filename = file.filename or "transcript"
 
     dep = models.Deposition(
         case_id=case_id,
         witness_name=witness_name,
         deposition_date=deposition_date,
         filename=filename,
+        file_path="",
     )
-    db.add(dep)
-    db.commit()
-    db.refresh(dep)
+    db.add(dep); db.commit(); db.refresh(dep)
 
-    segments_data = parse_transcript(raw_text)
-    for seg in segments_data:
-        segment = models.TranscriptSegment(
-            deposition_id=dep.id,
-            segment_index=seg["segment_index"],
-            speaker=seg["speaker"],
-            text=seg["text"],
-            page_number=seg.get("page_number"),
-            line_number=seg.get("line_number"),
-        )
-        db.add(segment)
+    # Save the original file so the viewer can render it
+    ext = os.path.splitext(filename)[1].lower() or ".bin"
+    saved_name = f"{dep.id}{ext}"
+    file_path = os.path.join(UPLOAD_DIR, saved_name)
+    with open(file_path, "wb") as f:
+        f.write(file_bytes)
+    dep.file_path = file_path
     db.commit()
 
     return dep
@@ -231,14 +214,16 @@ def get_deposition(dep_id: int, db: Session = Depends(get_db)):
     return dep
 
 
-@app.get("/api/depositions/{dep_id}/segments", response_model=List[SegmentOut])
-def get_segments(dep_id: int, db: Session = Depends(get_db)):
-    return (
-        db.query(models.TranscriptSegment)
-        .filter(models.TranscriptSegment.deposition_id == dep_id)
-        .order_by(models.TranscriptSegment.segment_index)
-        .all()
-    )
+@app.get("/api/depositions/{dep_id}/file")
+def get_deposition_file(dep_id: int, db: Session = Depends(get_db)):
+    """Serve the original uploaded transcript file."""
+    dep = db.query(models.Deposition).filter(models.Deposition.id == dep_id).first()
+    if not dep:
+        raise HTTPException(status_code=404, detail="Deposition not found")
+    if not dep.file_path or not os.path.exists(dep.file_path):
+        raise HTTPException(status_code=404, detail="File not found — please re-upload this transcript")
+    media = "application/pdf" if dep.filename.lower().endswith(".pdf") else "text/plain"
+    return FileResponse(dep.file_path, media_type=media, filename=dep.filename)
 
 
 @app.delete("/api/depositions/{dep_id}")
@@ -246,8 +231,9 @@ def delete_deposition(dep_id: int, db: Session = Depends(get_db)):
     dep = db.query(models.Deposition).filter(models.Deposition.id == dep_id).first()
     if not dep:
         raise HTTPException(status_code=404, detail="Deposition not found")
-    db.delete(dep)
-    db.commit()
+    if dep.file_path and os.path.exists(dep.file_path):
+        os.remove(dep.file_path)
+    db.delete(dep); db.commit()
     return {"ok": True}
 
 
@@ -264,9 +250,7 @@ def create_issue(case_id: int, body: IssueCreate, db: Session = Depends(get_db))
     if not case:
         raise HTTPException(status_code=404, detail="Case not found")
     issue = models.Issue(case_id=case_id, name=body.name, description=body.description, color=body.color)
-    db.add(issue)
-    db.commit()
-    db.refresh(issue)
+    db.add(issue); db.commit(); db.refresh(issue)
     return issue
 
 
@@ -275,11 +259,8 @@ def update_issue(issue_id: int, body: IssueCreate, db: Session = Depends(get_db)
     issue = db.query(models.Issue).filter(models.Issue.id == issue_id).first()
     if not issue:
         raise HTTPException(status_code=404, detail="Issue not found")
-    issue.name = body.name
-    issue.description = body.description
-    issue.color = body.color
-    db.commit()
-    db.refresh(issue)
+    issue.name = body.name; issue.description = body.description; issue.color = body.color
+    db.commit(); db.refresh(issue)
     return issue
 
 
@@ -288,8 +269,7 @@ def delete_issue(issue_id: int, db: Session = Depends(get_db)):
     issue = db.query(models.Issue).filter(models.Issue.id == issue_id).first()
     if not issue:
         raise HTTPException(status_code=404, detail="Issue not found")
-    db.delete(issue)
-    db.commit()
+    db.delete(issue); db.commit()
     return {"ok": True}
 
 
@@ -297,12 +277,9 @@ def delete_issue(issue_id: int, db: Session = Depends(get_db)):
 
 @app.get("/api/depositions/{dep_id}/tags", response_model=List[TagOut])
 def list_tags(dep_id: int, db: Session = Depends(get_db)):
-    return (
-        db.query(models.Tag)
-        .filter(models.Tag.deposition_id == dep_id)
-        .order_by(models.Tag.start_segment_index)
-        .all()
-    )
+    return (db.query(models.Tag)
+            .filter(models.Tag.deposition_id == dep_id)
+            .order_by(models.Tag.created_at).all())
 
 
 @app.post("/api/depositions/{dep_id}/tags", response_model=TagOut)
@@ -316,13 +293,11 @@ def create_tag(dep_id: int, body: TagCreate, db: Session = Depends(get_db)):
     tag = models.Tag(
         deposition_id=dep_id,
         issue_id=body.issue_id,
-        start_segment_index=min(body.start_segment_index, body.end_segment_index),
-        end_segment_index=max(body.start_segment_index, body.end_segment_index),
+        selected_text=body.selected_text,
+        rects_json=body.rects_json,
         note=body.note,
     )
-    db.add(tag)
-    db.commit()
-    db.refresh(tag)
+    db.add(tag); db.commit(); db.refresh(tag)
     return tag
 
 
@@ -331,8 +306,7 @@ def delete_tag(tag_id: int, db: Session = Depends(get_db)):
     tag = db.query(models.Tag).filter(models.Tag.id == tag_id).first()
     if not tag:
         raise HTTPException(status_code=404, detail="Tag not found")
-    db.delete(tag)
-    db.commit()
+    db.delete(tag); db.commit()
     return {"ok": True}
 
 
@@ -346,35 +320,20 @@ def get_report(case_id: int, issue_id: int, db: Session = Depends(get_db)):
     if not issue:
         raise HTTPException(status_code=404, detail="Issue not found")
 
-    tags = (
-        db.query(models.Tag)
-        .filter(models.Tag.issue_id == issue_id)
-        .order_by(models.Tag.deposition_id, models.Tag.start_segment_index)
-        .all()
-    )
+    tags = (db.query(models.Tag)
+            .filter(models.Tag.issue_id == issue_id)
+            .order_by(models.Tag.deposition_id, models.Tag.created_at).all())
 
     passages = []
     for tag in tags:
-        segments = (
-            db.query(models.TranscriptSegment)
-            .filter(
-                models.TranscriptSegment.deposition_id == tag.deposition_id,
-                models.TranscriptSegment.segment_index >= tag.start_segment_index,
-                models.TranscriptSegment.segment_index <= tag.end_segment_index,
-            )
-            .order_by(models.TranscriptSegment.segment_index)
-            .all()
-        )
         dep = db.query(models.Deposition).filter(models.Deposition.id == tag.deposition_id).first()
-        passages.append(
-            ReportPassage(
-                witness_name=dep.witness_name,
-                deposition_date=dep.deposition_date,
-                deposition_id=dep.id,
-                tag_id=tag.id,
-                note=tag.note,
-                segments=[SegmentOut.model_validate(s) for s in segments],
-            )
-        )
+        passages.append(ReportPassage(
+            witness_name=dep.witness_name,
+            deposition_date=dep.deposition_date,
+            deposition_id=dep.id,
+            tag_id=tag.id,
+            note=tag.note,
+            selected_text=tag.selected_text,
+        ))
 
     return ReportOut(issue=IssueOut.model_validate(issue), passages=passages)

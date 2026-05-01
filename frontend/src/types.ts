@@ -14,15 +14,6 @@ export interface Deposition {
   created_at: string;
 }
 
-export interface Segment {
-  id: number;
-  segment_index: number;
-  speaker: string; // "Q" | "A" | "HEADING" | "OTHER"
-  text: string;
-  page_number: number | null;
-  line_number: number | null;
-}
-
 export interface Issue {
   id: number;
   case_id: number;
@@ -32,12 +23,21 @@ export interface Issue {
   created_at: string;
 }
 
+// A single highlight rect stored as fractions of the page dimensions (0–1)
+export interface HighlightRect {
+  x: number;
+  y: number;
+  w: number;
+  h: number;
+  pageIndex: number;
+}
+
 export interface Tag {
   id: number;
   deposition_id: number;
   issue_id: number;
-  start_segment_index: number;
-  end_segment_index: number;
+  selected_text: string;   // verbatim text the user highlighted
+  rects_json: string;      // JSON-encoded HighlightRect[]
   note: string;
   created_at: string;
   issue: Issue;
@@ -49,7 +49,7 @@ export interface ReportPassage {
   deposition_id: number;
   tag_id: number;
   note: string;
-  segments: Segment[];
+  selected_text: string;
 }
 
 export interface Report {
@@ -58,14 +58,14 @@ export interface Report {
 }
 
 export const PRESET_COLORS = [
-  "#FF6B6B",
-  "#FFB347",
-  "#FFD700",
-  "#90EE90",
-  "#4FC3F7",
-  "#9575CD",
-  "#F48FB1",
-  "#80DEEA",
-  "#A5D6A7",
-  "#CE93D8",
+  "#FFD700",  // yellow (default — classic highlighter)
+  "#FF6B6B",  // red
+  "#90EE90",  // green
+  "#87CEEB",  // sky blue
+  "#DDA0DD",  // plum
+  "#FFB347",  // orange
+  "#98FF98",  // mint
+  "#FF69B4",  // pink
+  "#B0C4DE",  // steel blue
+  "#F0E68C",  // khaki
 ];

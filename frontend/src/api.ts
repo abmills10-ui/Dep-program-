@@ -1,4 +1,4 @@
-import type { Case, Deposition, Segment, Issue, Tag, Report } from "./types";
+import type { Case, Deposition, Issue, Tag, Report } from "./types";
 
 const BASE = "/api";
 
@@ -36,38 +36,23 @@ export const createDeposition = (
   fd.append("witness_name", witnessName);
   fd.append("deposition_date", depositionDate);
   fd.append("file", file);
-  return request<Deposition>(`/cases/${caseId}/depositions`, {
-    method: "POST",
-    body: fd,
-  });
+  return request<Deposition>(`/cases/${caseId}/depositions`, { method: "POST", body: fd });
 };
 export const deleteDeposition = (id: number) =>
   request<{ ok: boolean }>(`/depositions/${id}`, { method: "DELETE" });
 
-// Segments
-export const getSegments = (depId: number) =>
-  request<Segment[]>(`/depositions/${depId}/segments`);
+// File URL (for PDF viewer)
+export const depositionFileUrl = (depId: number) => `/api/depositions/${depId}/file`;
 
 // Issues
-export const getIssues = (caseId: number) =>
-  request<Issue[]>(`/cases/${caseId}/issues`);
-export const createIssue = (
-  caseId: number,
-  name: string,
-  description: string,
-  color: string
-) =>
+export const getIssues = (caseId: number) => request<Issue[]>(`/cases/${caseId}/issues`);
+export const createIssue = (caseId: number, name: string, description: string, color: string) =>
   request<Issue>(`/cases/${caseId}/issues`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ name, description, color }),
   });
-export const updateIssue = (
-  issueId: number,
-  name: string,
-  description: string,
-  color: string
-) =>
+export const updateIssue = (issueId: number, name: string, description: string, color: string) =>
   request<Issue>(`/issues/${issueId}`, {
     method: "PUT",
     headers: { "Content-Type": "application/json" },
@@ -77,13 +62,12 @@ export const deleteIssue = (id: number) =>
   request<{ ok: boolean }>(`/issues/${id}`, { method: "DELETE" });
 
 // Tags
-export const getTags = (depId: number) =>
-  request<Tag[]>(`/depositions/${depId}/tags`);
+export const getTags = (depId: number) => request<Tag[]>(`/depositions/${depId}/tags`);
 export const createTag = (
   depId: number,
   issueId: number,
-  startIdx: number,
-  endIdx: number,
+  selectedText: string,
+  rectsJson: string,
   note: string
 ) =>
   request<Tag>(`/depositions/${depId}/tags`, {
@@ -91,8 +75,8 @@ export const createTag = (
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({
       issue_id: issueId,
-      start_segment_index: startIdx,
-      end_segment_index: endIdx,
+      selected_text: selectedText,
+      rects_json: rectsJson,
       note,
     }),
   });

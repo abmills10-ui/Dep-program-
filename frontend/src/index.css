@@ -154,17 +154,68 @@ a { color: inherit; text-decoration: none; }
 }
 .transcript-sidebar h3 { font-size: .8rem; text-transform: uppercase; letter-spacing: .06em; color: #777; margin-bottom: .75rem; }
 
-.transcript-main {
-  background: #fff;
+/* PDF viewer */
+.pdf-zoombar {
+  display: flex;
+  align-items: center;
+  gap: .5rem;
+  padding: .5rem .75rem;
+  background: #f0f0ee;
   border: 1px solid #ddd;
+  border-radius: 6px 6px 0 0;
+  border-bottom: none;
+}
+
+.pdf-scroll-area {
+  background: #525659;
+  border: 1px solid #444;
+  border-radius: 0 0 6px 6px;
+  min-height: 600px;
+  overflow-y: auto;
+  max-height: calc(100vh - 180px);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  padding: 1.5rem 0;
+  gap: 1.5rem;
+}
+
+.pdf-page-wrapper {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: .4rem;
+}
+
+.pdf-page-num {
+  color: #ccc;
+  font-size: .75rem;
+  letter-spacing: .04em;
+}
+
+/* react-pdf canvas shadow */
+.pdf-scroll-area .react-pdf__Page {
+  box-shadow: 0 4px 24px rgba(0,0,0,.5);
+}
+
+/* Make the text layer selectable with correct cursor */
+.pdf-scroll-area .react-pdf__Page__textContent {
+  user-select: text;
+  cursor: text;
+}
+
+/* Plain-text viewer */
+.txt-viewer {
+  background: #525659;
+  border: 1px solid #444;
   border-radius: 6px;
-  overflow: hidden;
+  min-height: 600px;
+  max-height: calc(100vh - 180px);
+  overflow-y: auto;
+  padding: 1.5rem;
+  cursor: text;
+  user-select: text;
 }
-.transcript-toolbar {
-  display: flex; align-items: center; gap: .75rem; flex-wrap: wrap;
-  padding: .75rem 1rem; border-bottom: 1px solid #eee; background: #fafafa;
-}
-.transcript-toolbar span { font-size: .82rem; color: #555; }
 
 /* PDF-style transcript body */
 .pdf-transcript {

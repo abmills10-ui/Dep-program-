@@ -43,11 +43,11 @@ export default function ReportPage() {
     }
   }
   const groupKeys = Object.keys(grouped);
-
   const selectedIssue = issues.find(i => i.id === selectedIssueId);
 
   return (
-    <main className="page">
+    <main className="page" style={{ maxWidth: 860 }}>
+      {/* Breadcrumb */}
       <div style={{ marginBottom: ".75rem", fontSize: ".85rem" }}>
         <Link to="/" style={{ color: "#1c6ea4" }}>Cases</Link>
         {" · "}
@@ -57,8 +57,8 @@ export default function ReportPage() {
       </div>
 
       {/* Controls */}
-      <div style={{ display: "flex", alignItems: "center", gap: "1rem", marginBottom: "2rem", flexWrap: "wrap" }}>
-        <h1 style={{ fontSize: "1.4rem" }}>Issue Report</h1>
+      <div style={{ display: "flex", alignItems: "center", gap: "1rem", marginBottom: "1.75rem", flexWrap: "wrap" }}>
+        <h1 style={{ fontSize: "1.4rem", whiteSpace: "nowrap" }}>Issue Report</h1>
         <select
           value={selectedIssueId}
           onChange={e => setSelectedIssueId(Number(e.target.value))}
@@ -67,100 +67,127 @@ export default function ReportPage() {
           {issues.map(iss => <option key={iss.id} value={iss.id}>{iss.name}</option>)}
         </select>
         <button className="btn btn-ghost" style={{ marginLeft: "auto" }} onClick={() => window.print()}>
-          Print / Export PDF
+          Print / Save PDF
         </button>
       </div>
 
-      {/* Issue header */}
+      {/* Issue summary bar */}
       {report && selectedIssue && (
         <div style={{
           borderLeft: `5px solid ${selectedIssue.color}`,
           paddingLeft: "1rem",
           marginBottom: "2rem",
+          background: "#fff",
+          border: `1px solid ${selectedIssue.color}`,
+          borderLeftWidth: 5,
+          borderRadius: "0 6px 6px 0",
+          padding: ".75rem 1rem",
         }}>
-          <h2 style={{ color: selectedIssue.color, fontSize: "1.3rem" }}>{report.issue.name}</h2>
-          {report.issue.description && <p style={{ color: "#555", marginTop: ".25rem" }}>{report.issue.description}</p>}
-          <p style={{ color: "#888", fontSize: ".85rem", marginTop: ".4rem" }}>
-            {report.passages.length} tagged passage{report.passages.length !== 1 ? "s" : ""}
+          <div style={{ fontWeight: "bold", fontSize: "1.1rem", color: selectedIssue.color }}>
+            {report.issue.name}
+          </div>
+          {report.issue.description && (
+            <div style={{ color: "#555", fontSize: ".88rem", marginTop: ".2rem" }}>{report.issue.description}</div>
+          )}
+          <div style={{ color: "#999", fontSize: ".82rem", marginTop: ".4rem" }}>
+            {report.passages.length} passage{report.passages.length !== 1 ? "s" : ""}
             {" across "}
             {groupKeys.length} deposition{groupKeys.length !== 1 ? "s" : ""}
-            {" · Generated "}{new Date().toLocaleDateString()}
-          </p>
+            {" · Generated "}{new Date().toLocaleDateString("en-US", { year: "numeric", month: "long", day: "numeric" })}
+          </div>
         </div>
       )}
 
       {loading && <p style={{ color: "#888", fontStyle: "italic" }}>Loading…</p>}
 
       {report && report.passages.length === 0 && (
-        <p className="report-empty">
-          No tagged testimony for this issue yet. Open a transcript to tag relevant exchanges.
+        <p style={{ color: "#999", fontStyle: "italic", textAlign: "center", padding: "3rem 0" }}>
+          No highlighted testimony for this issue yet. Open a transcript and select text to tag it.
         </p>
       )}
 
-      {/* Depositions */}
+      {/* Passages grouped by deposition */}
       {report && groupKeys.map(key => {
         const [, witnessName, depoDate] = key.split(":::");
         const passages = grouped[key];
         const depId = passages[0].deposition_id;
 
         return (
-          <div key={key} className="report-deposition">
-            <div className="report-deposition-header">
-              Deposition of {witnessName.toUpperCase()}
-              {depoDate && ` · ${depoDate}`}
+          <div key={key} style={{ marginBottom: "2.5rem" }}>
+            {/* Deposition header */}
+            <div style={{
+              background: "#1c2b3a",
+              color: "#fff",
+              padding: ".55rem 1rem",
+              borderRadius: "4px 4px 0 0",
+              fontWeight: "bold",
+              fontSize: ".9rem",
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "space-between",
+            }}>
+              <span>
+                Deposition of {witnessName.toUpperCase()}
+                {depoDate && <span style={{ fontWeight: "normal", marginLeft: ".75rem", color: "#aad" }}>{depoDate}</span>}
+              </span>
               <Link
                 to={`/cases/${cId}/depositions/${depId}`}
-                style={{ marginLeft: "1rem", color: "#aad", fontSize: ".82rem", fontWeight: "normal" }}
+                style={{ color: "#7ab3e0", fontSize: ".8rem", fontWeight: "normal" }}
               >
                 Open transcript ↗
               </Link>
             </div>
 
-            {passages.map((passage, pi) => (
-              <div
-                key={passage.tag_id}
-                className="report-passage"
-                style={{ borderLeftColor: selectedIssue?.color ?? '#ccc', borderLeftWidth: 4 }}
-              >
-                {passage.note && (
-                  <div className="report-passage-note">
-                    <strong>Note:</strong> {passage.note}
-                  </div>
-                )}
+            {/* Passages */}
+            <div style={{ border: "1px solid #ddd", borderTop: "none", borderRadius: "0 0 4px 4px", overflow: "hidden" }}>
+              {passages.map((passage, pi) => (
+                <div key={passage.tag_id}>
+                  {pi > 0 && <div style={{ height: 1, background: "#eee" }} />}
 
-                {/* Verbatim transcript lines — monospace, with line numbers */}
-                <div className="report-verbatim">
-                  {passage.segments.map(seg => {
-                    if (seg.speaker === 'PAGE') {
-                      return (
-                        <div key={seg.id} className="report-page-label">{seg.text}</div>
-                      );
-                    }
-                    return (
-                      <div
-                        key={seg.id}
-                        className={`report-verbatim-line${seg.speaker === 'BLANK' ? ' blank' : ''}`}
-                      >
-                        <span className="report-line-no">
-                          {seg.line_number != null ? seg.line_number : ''}
-                        </span>
-                        <span className="report-line-text">{seg.text || ''}</span>
+                  {/* Issue color tab + testimony */}
+                  <div style={{ display: "flex" }}>
+                    <div style={{ width: 4, flexShrink: 0, background: selectedIssue?.color ?? "#ccc" }} />
+                    <div style={{ flex: 1, padding: "1rem 1.25rem" }}>
+
+                      {/* Optional note */}
+                      {passage.note && (
+                        <div style={{
+                          background: "#fffbeb",
+                          border: "1px solid #fde68a",
+                          borderRadius: "4px",
+                          padding: ".4rem .75rem",
+                          fontSize: ".82rem",
+                          color: "#92400e",
+                          marginBottom: ".75rem",
+                        }}>
+                          <strong>Note:</strong> {passage.note}
+                        </div>
+                      )}
+
+                      {/* Verbatim highlighted text */}
+                      <div style={{
+                        fontFamily: "'Georgia', serif",
+                        fontSize: ".95rem",
+                        lineHeight: 1.75,
+                        color: "#1a1a1a",
+                        whiteSpace: "pre-wrap",
+                        background: selectedIssue ? `${selectedIssue.color}22` : "#fffde7",
+                        borderRadius: "3px",
+                        padding: ".6rem .85rem",
+                      }}>
+                        {passage.selected_text}
                       </div>
-                    );
-                  })}
+                    </div>
+                  </div>
                 </div>
-
-                {pi < passages.length - 1 && (
-                  <div style={{ borderTop: "1px dashed #ddd", margin: ".5rem 0" }} />
-                )}
-              </div>
-            ))}
+              ))}
+            </div>
           </div>
         );
       })}
 
       {issues.length === 0 && (
-        <p className="empty-state">
+        <p style={{ color: "#999", fontStyle: "italic", textAlign: "center", padding: "3rem 0" }}>
           No issues defined. <Link to={`/cases/${cId}`} style={{ color: "#1c6ea4" }}>Add issues</Link> first.
         </p>
       )}
