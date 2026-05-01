@@ -3,6 +3,44 @@ import { Link, useParams, useSearchParams } from "react-router-dom";
 import { getIssues, getReport, getCase } from "../api";
 import type { Issue, Report, Case, HighlightRect } from "../types";
 
+function CopyButton({ text }: { text: string }) {
+  const [copied, setCopied] = useState(false);
+  const handle = () => {
+    navigator.clipboard.writeText(text).then(() => {
+      setCopied(true);
+      setTimeout(() => setCopied(false), 2000);
+    });
+  };
+  return (
+    <button
+      onClick={handle}
+      title={copied ? "Copied!" : "Copy"}
+      style={{
+        position: "absolute", top: ".45rem", right: ".45rem",
+        background: copied ? "#e8f5e9" : "rgba(255,255,255,0.92)",
+        border: "1px solid #ddd", borderRadius: "5px",
+        padding: ".2rem .45rem", cursor: "pointer",
+        display: "flex", alignItems: "center", gap: ".3rem",
+        fontSize: ".73rem", color: copied ? "#2e7d32" : "#666",
+        transition: "color .15s, background .15s",
+        boxShadow: "0 1px 3px rgba(0,0,0,.08)",
+      }}
+    >
+      {copied ? (
+        <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
+          <polyline points="20 6 9 17 4 12" />
+        </svg>
+      ) : (
+        <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+          <rect x="9" y="9" width="13" height="13" rx="2" />
+          <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1" />
+        </svg>
+      )}
+      {copied ? "Copied" : "Copy"}
+    </button>
+  );
+}
+
 function buildCitation(witnessName: string, depoDate: string, selectedText: string, rectsJson: string): string {
   const lastName = witnessName.trim().split(/\s+/).pop() ?? witnessName;
 
@@ -264,45 +302,54 @@ export default function ReportPage() {
                                 {citation}
                               </div>
                             )}
-                            <div style={{
-                              fontFamily: "'Courier New', Courier, monospace",
-                              fontSize: ".88rem", lineHeight: 1.65, color: "#1a1a1a",
-                              whiteSpace: "pre-wrap",
-                              background: selectedIssue ? `${selectedIssue.color}18` : "#fffde7",
-                              borderLeft: `3px solid ${selectedIssue?.color ?? "#ccc"}`,
-                              borderRadius: "0 3px 3px 0",
-                              padding: ".65rem 1rem",
-                            }}>
-                              {passage.selected_text}
+                            <div style={{ position: "relative" }}>
+                              <div style={{
+                                fontFamily: "'Courier New', Courier, monospace",
+                                fontSize: ".88rem", lineHeight: 1.65, color: "#1a1a1a",
+                                whiteSpace: "pre-wrap",
+                                background: selectedIssue ? `${selectedIssue.color}18` : "#fffde7",
+                                borderLeft: `3px solid ${selectedIssue?.color ?? "#ccc"}`,
+                                borderRadius: "0 3px 3px 0",
+                                padding: ".65rem 2.5rem .65rem 1rem",
+                              }}>
+                                {passage.selected_text}
+                              </div>
+                              <CopyButton text={passage.selected_text} />
                             </div>
                           </div>
 
                           {/* Right: AI proposition (only when toggled) */}
                           {showPropositions && (
-                            <div style={{
-                              background: "#f8f9fc",
-                              border: "1px solid #dde",
-                              borderRadius: "4px",
-                              padding: ".75rem 1rem",
-                              fontSize: ".88rem",
-                              lineHeight: 1.65,
-                              color: "#1a1a1a",
-                            }}>
-                              <div style={{ fontSize: ".73rem", fontWeight: 700, textTransform: "uppercase", letterSpacing: ".06em", color: "#888", marginBottom: ".5rem" }}>
-                                Proposition
+                            <div style={{ position: "relative" }}>
+                              <div style={{
+                                background: "#f8f9fc",
+                                border: "1px solid #dde",
+                                borderRadius: "4px",
+                                padding: ".75rem 2.5rem .75rem 1rem",
+                                fontSize: ".88rem",
+                                lineHeight: 1.65,
+                                color: "#1a1a1a",
+                                minHeight: "3rem",
+                              }}>
+                                <div style={{ fontSize: ".73rem", fontWeight: 700, textTransform: "uppercase", letterSpacing: ".06em", color: "#888", marginBottom: ".5rem" }}>
+                                  Proposition
+                                </div>
+                                {prop === "loading" && (
+                                  <span style={{ color: "#aaa", fontStyle: "italic" }}>Generating…</span>
+                                )}
+                                {prop === "error" && (
+                                  <span style={{ color: "#c00", fontStyle: "italic" }}>Could not generate — is ANTHROPIC_API_KEY set?</span>
+                                )}
+                                {prop && prop !== "loading" && prop !== "error" && (
+                                  <span style={{ fontFamily: "'Georgia', serif" }}>
+                                    <span style={{ color: "#555" }}>{citation} (</span>
+                                    {prop}
+                                    <span style={{ color: "#555" }}>)</span>
+                                  </span>
+                                )}
                               </div>
-                              {prop === "loading" && (
-                                <span style={{ color: "#aaa", fontStyle: "italic" }}>Generating…</span>
-                              )}
-                              {prop === "error" && (
-                                <span style={{ color: "#c00", fontStyle: "italic" }}>Could not generate — is ANTHROPIC_API_KEY set?</span>
-                              )}
                               {prop && prop !== "loading" && prop !== "error" && (
-                                <span style={{ fontFamily: "'Georgia', serif" }}>
-                                  <span style={{ color: "#555" }}>{citation} (</span>
-                                  {prop}
-                                  <span style={{ color: "#555" }}>)</span>
-                                </span>
+                                <CopyButton text={`${citation} (${prop})`} />
                               )}
                             </div>
                           )}

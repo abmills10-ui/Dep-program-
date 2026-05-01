@@ -382,8 +382,9 @@ You are a legal brief writer drafting parenthetical propositions for deposition 
 Given the transcript excerpt below, write the parenthetical portion of the citation — \
 the text that appears inside the parentheses after the citation.
 
-Follow these rules:
-1. If the selection is a short, complete Q&A exchange, quote it verbatim: Q. [question] A. [answer]
+Follow these rules exactly:
+1. If the selection is a short, complete Q&A exchange, wrap the entire thing in quotation marks: \
+"Q. [question] A. [answer]" — the outer quotes are required.
 2. If the selection is long, spans multiple Q&As, or the answer is lengthy, paraphrase \
 and splice in key verbatim phrases in quotation marks: testifying that "[phrase1]" and "[phrase2]"
 3. If the witness's answer mainly agrees with or adopts the questioner's language \
