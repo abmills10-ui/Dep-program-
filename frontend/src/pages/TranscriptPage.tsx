@@ -105,10 +105,8 @@ function extractRange(
     return Math.abs(dy) > 3 ? dy : ra.left - rb.left;
   });
 
-  const text = inRange.map(s => s.textContent ?? "").join(" ").replace(/\s+/g, " ").trim();
-
-  // Build one full-width rect per visual line
-  const lineMap = new Map<number, { top: number; bottom: number }>();
+  // Group spans by visual line, preserving line structure
+  const lineMap = new Map<number, { top: number; bottom: number; spans: Element[] }>();
   for (const s of inRange) {
     const r = s.getBoundingClientRect();
     const topFrac    = (r.top    - cr.top) / cr.height;
@@ -116,15 +114,21 @@ function extractRange(
     const key = Math.round(topFrac * 300) / 300;
     const ex = lineMap.get(key);
     lineMap.set(key, ex
-      ? { top: Math.min(ex.top, topFrac), bottom: Math.max(ex.bottom, bottomFrac) }
-      : { top: topFrac, bottom: bottomFrac });
+      ? { top: Math.min(ex.top, topFrac), bottom: Math.max(ex.bottom, bottomFrac), spans: [...ex.spans, s] }
+      : { top: topFrac, bottom: bottomFrac, spans: [s] });
   }
 
-  const rects: HighlightRect[] = Array.from(lineMap.values())
-    .sort((a, b) => a.top - b.top)
-    .map(({ top, bottom }) => ({
-      x: 0, y: top, w: 1, h: bottom - top, pageIndex,
-    }));
+  const sortedLines = Array.from(lineMap.entries()).sort(([a], [b]) => a - b);
+
+  // Join spans within a line with spaces, join lines with newlines
+  const text = sortedLines
+    .map(([, { spans }]) => spans.map(s => s.textContent ?? "").join(" ").replace(/\s+/g, " ").trim())
+    .filter(Boolean)
+    .join("\n");
+
+  const rects: HighlightRect[] = sortedLines.map(([, { top, bottom }]) => ({
+    x: 0, y: top, w: 1, h: bottom - top, pageIndex,
+  }));
 
   return { text, rects };
 }
@@ -491,12 +495,14 @@ export default function TranscriptPage() {
           <div className="modal">
             <div className="modal-title">Highlight Testimony</div>
             <div style={{
-              background: "#f9f9f7", border: "1px solid #ddd", borderRadius: 4,
+              background: "#f5f5f3", border: "1px solid #ddd", borderRadius: 4,
               padding: ".6rem .75rem", marginBottom: "1rem",
-              fontSize: ".85rem", fontStyle: "italic", color: "#444",
-              maxHeight: 120, overflow: "auto", lineHeight: 1.6,
+              fontFamily: "'Courier New', Courier, monospace",
+              fontSize: ".82rem", color: "#333",
+              maxHeight: 140, overflow: "auto", lineHeight: 1.65,
+              whiteSpace: "pre-wrap",
             }}>
-              "{pending.text.length > 300 ? pending.text.slice(0, 300) + "…" : pending.text}"
+              {pending.text.length > 400 ? pending.text.slice(0, 400) + "…" : pending.text}
             </div>
             {tagError && <p style={{ color: "#c00", marginBottom: ".75rem", fontSize: ".85rem" }}>{tagError}</p>}
             <div className="form-group">

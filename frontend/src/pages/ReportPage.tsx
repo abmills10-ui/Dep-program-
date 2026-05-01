@@ -164,16 +164,17 @@ export default function ReportPage() {
                         </div>
                       )}
 
-                      {/* Verbatim highlighted text */}
+                      {/* Verbatim highlighted text — transcript style */}
                       <div style={{
-                        fontFamily: "'Georgia', serif",
-                        fontSize: ".95rem",
-                        lineHeight: 1.75,
+                        fontFamily: "'Courier New', Courier, monospace",
+                        fontSize: ".88rem",
+                        lineHeight: 1.65,
                         color: "#1a1a1a",
                         whiteSpace: "pre-wrap",
-                        background: selectedIssue ? `${selectedIssue.color}22` : "#fffde7",
-                        borderRadius: "3px",
-                        padding: ".6rem .85rem",
+                        background: selectedIssue ? `${selectedIssue.color}18` : "#fffde7",
+                        borderLeft: `3px solid ${selectedIssue?.color ?? "#ccc"}`,
+                        borderRadius: "0 3px 3px 0",
+                        padding: ".65rem 1rem",
                       }}>
                         {passage.selected_text}
                       </div>
