@@ -3,13 +3,6 @@ import { Link, useParams, useSearchParams } from "react-router-dom";
 import { getIssues, getReport, getCase } from "../api";
 import type { Issue, Report, Case } from "../types";
 
-function hexToRgba(hex: string, alpha: number) {
-  const r = parseInt(hex.slice(1, 3), 16);
-  const g = parseInt(hex.slice(3, 5), 16);
-  const b = parseInt(hex.slice(5, 7), 16);
-  return `rgba(${r},${g},${b},${alpha})`;
-}
-
 export default function ReportPage() {
   const { caseId } = useParams<{ caseId: string }>();
   const [searchParams, setSearchParams] = useSearchParams();
@@ -49,12 +42,12 @@ export default function ReportPage() {
       grouped[key].push(p);
     }
   }
-
   const groupKeys = Object.keys(grouped);
+
+  const selectedIssue = issues.find(i => i.id === selectedIssueId);
 
   return (
     <main className="page">
-      {/* Breadcrumb */}
       <div style={{ marginBottom: ".75rem", fontSize: ".85rem" }}>
         <Link to="/" style={{ color: "#1c6ea4" }}>Cases</Link>
         {" · "}
@@ -63,30 +56,35 @@ export default function ReportPage() {
         <span>Issue Report</span>
       </div>
 
+      {/* Controls */}
       <div style={{ display: "flex", alignItems: "center", gap: "1rem", marginBottom: "2rem", flexWrap: "wrap" }}>
         <h1 style={{ fontSize: "1.4rem" }}>Issue Report</h1>
-        <div style={{ flex: 1, minWidth: "220px" }}>
-          <select
-            value={selectedIssueId}
-            onChange={e => setSelectedIssueId(Number(e.target.value))}
-            style={{ padding: ".45rem .75rem", borderRadius: "4px", border: "1px solid #ccc", fontSize: ".9rem", fontFamily: "inherit" }}
-          >
-            {issues.map(iss => <option key={iss.id} value={iss.id}>{iss.name}</option>)}
-          </select>
-        </div>
-        <button className="btn btn-ghost print-btn" onClick={() => window.print()}>Print / Export PDF</button>
+        <select
+          value={selectedIssueId}
+          onChange={e => setSelectedIssueId(Number(e.target.value))}
+          style={{ padding: ".45rem .75rem", borderRadius: "4px", border: "1px solid #ccc", fontSize: ".9rem", fontFamily: "inherit" }}
+        >
+          {issues.map(iss => <option key={iss.id} value={iss.id}>{iss.name}</option>)}
+        </select>
+        <button className="btn btn-ghost" style={{ marginLeft: "auto" }} onClick={() => window.print()}>
+          Print / Export PDF
+        </button>
       </div>
 
-      {report && (
-        <div className="report-header" style={{ borderLeftColor: report.issue.color, borderLeftWidth: 4, borderLeftStyle: "solid", paddingLeft: "1rem" }}>
-          <h1 style={{ color: report.issue.color }}>{report.issue.name}</h1>
-          {report.issue.description && <p>{report.issue.description}</p>}
-          <p style={{ marginTop: ".4rem" }}>
+      {/* Issue header */}
+      {report && selectedIssue && (
+        <div style={{
+          borderLeft: `5px solid ${selectedIssue.color}`,
+          paddingLeft: "1rem",
+          marginBottom: "2rem",
+        }}>
+          <h2 style={{ color: selectedIssue.color, fontSize: "1.3rem" }}>{report.issue.name}</h2>
+          {report.issue.description && <p style={{ color: "#555", marginTop: ".25rem" }}>{report.issue.description}</p>}
+          <p style={{ color: "#888", fontSize: ".85rem", marginTop: ".4rem" }}>
             {report.passages.length} tagged passage{report.passages.length !== 1 ? "s" : ""}
             {" across "}
             {groupKeys.length} deposition{groupKeys.length !== 1 ? "s" : ""}
-            {" · "}
-            Generated {new Date().toLocaleDateString()}
+            {" · Generated "}{new Date().toLocaleDateString()}
           </p>
         </div>
       )}
@@ -94,17 +92,21 @@ export default function ReportPage() {
       {loading && <p style={{ color: "#888", fontStyle: "italic" }}>Loading…</p>}
 
       {report && report.passages.length === 0 && (
-        <p className="report-empty">No tagged testimony for this issue yet. Open a transcript to tag relevant exchanges.</p>
+        <p className="report-empty">
+          No tagged testimony for this issue yet. Open a transcript to tag relevant exchanges.
+        </p>
       )}
 
+      {/* Depositions */}
       {report && groupKeys.map(key => {
         const [, witnessName, depoDate] = key.split(":::");
         const passages = grouped[key];
         const depId = passages[0].deposition_id;
+
         return (
           <div key={key} className="report-deposition">
             <div className="report-deposition-header">
-              Deposition of {witnessName}
+              Deposition of {witnessName.toUpperCase()}
               {depoDate && ` · ${depoDate}`}
               <Link
                 to={`/cases/${cId}/depositions/${depId}`}
@@ -114,27 +116,43 @@ export default function ReportPage() {
               </Link>
             </div>
 
-            {passages.map(passage => (
+            {passages.map((passage, pi) => (
               <div
                 key={passage.tag_id}
                 className="report-passage"
-                style={{ borderColor: report.issue.color, borderLeftWidth: 3 }}
+                style={{ borderLeftColor: selectedIssue?.color ?? '#ccc', borderLeftWidth: 4 }}
               >
                 {passage.note && (
-                  <div className="report-passage-note">Note: {passage.note}</div>
+                  <div className="report-passage-note">
+                    <strong>Note:</strong> {passage.note}
+                  </div>
                 )}
-                {passage.segments
-                  .filter(s => s.speaker === "Q" || s.speaker === "A")
-                  .map(seg => (
-                    <div
-                      key={seg.id}
-                      className="report-segment"
-                      style={{ background: seg.speaker === "A" ? hexToRgba(report.issue.color, 0.06) : undefined }}
-                    >
-                      <span className={`report-segment-speaker ${seg.speaker}`}>{seg.speaker}.</span>
-                      <span className="report-segment-text">{seg.text}</span>
-                    </div>
-                  ))}
+
+                {/* Verbatim transcript lines — monospace, with line numbers */}
+                <div className="report-verbatim">
+                  {passage.segments.map(seg => {
+                    if (seg.speaker === 'PAGE') {
+                      return (
+                        <div key={seg.id} className="report-page-label">{seg.text}</div>
+                      );
+                    }
+                    return (
+                      <div
+                        key={seg.id}
+                        className={`report-verbatim-line${seg.speaker === 'BLANK' ? ' blank' : ''}`}
+                      >
+                        <span className="report-line-no">
+                          {seg.line_number != null ? seg.line_number : ''}
+                        </span>
+                        <span className="report-line-text">{seg.text || ''}</span>
+                      </div>
+                    );
+                  })}
+                </div>
+
+                {pi < passages.length - 1 && (
+                  <div style={{ borderTop: "1px dashed #ddd", margin: ".5rem 0" }} />
+                )}
               </div>
             ))}
           </div>
@@ -143,7 +161,7 @@ export default function ReportPage() {
 
       {issues.length === 0 && (
         <p className="empty-state">
-          No issues defined for this case. <Link to={`/cases/${cId}`} style={{ color: "#1c6ea4" }}>Add issues</Link> first.
+          No issues defined. <Link to={`/cases/${cId}`} style={{ color: "#1c6ea4" }}>Add issues</Link> first.
         </p>
       )}
     </main>
