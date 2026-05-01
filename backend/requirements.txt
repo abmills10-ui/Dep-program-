@@ -6,4 +6,3 @@ pdfplumber==0.11.0
 pydantic==2.7.1
 aiofiles==23.2.1
 anthropic>=0.25.0
-python-dotenv>=1.0.0

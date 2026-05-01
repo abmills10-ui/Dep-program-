@@ -2,25 +2,27 @@
 set -e
 
 ROOT="$(cd "$(dirname "$0")" && pwd)"
-
-# ── Create backend/.env if it doesn't exist ───────────────────────────────────
 ENV_FILE="$ROOT/backend/.env"
+
+# ── Create .env if it doesn't exist ──────────────────────────────────────────
 if [ ! -f "$ENV_FILE" ]; then
   cat > "$ENV_FILE" <<'ENVEOF'
-# Paste your Anthropic API key below to enable AI propositions in reports.
-# Get one at: https://console.anthropic.com
 ANTHROPIC_API_KEY=
 ENVEOF
   echo ""
-  echo "  Created backend/.env — open it and paste your Anthropic API key"
-  echo "  to enable AI-generated propositions in issue reports."
+  echo "  Created backend/.env"
+  echo "  To enable AI propositions, open that file and paste your Anthropic API key."
   echo ""
 fi
 
-# Warn if key is still blank
-if grep -q "^ANTHROPIC_API_KEY=$" "$ENV_FILE" 2>/dev/null; then
-  echo "  NOTE: ANTHROPIC_API_KEY is not set in backend/.env"
-  echo "        AI propositions will not work until you add it."
+# ── Load .env into the shell so uvicorn inherits the variables ────────────────
+set -a
+# shellcheck disable=SC1090
+source "$ENV_FILE"
+set +a
+
+if [ -z "$ANTHROPIC_API_KEY" ]; then
+  echo "  NOTE: ANTHROPIC_API_KEY is blank in backend/.env — AI propositions will not work."
   echo ""
 fi
 
