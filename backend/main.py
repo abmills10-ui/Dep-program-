@@ -326,6 +326,20 @@ def create_tag(dep_id: int, body: TagCreate, db: Session = Depends(get_db)):
     return tag
 
 
+@app.put("/api/tags/{tag_id}", response_model=TagOut)
+def update_tag(tag_id: int, body: TagCreate, db: Session = Depends(get_db)):
+    tag = db.query(models.Tag).filter(models.Tag.id == tag_id).first()
+    if not tag:
+        raise HTTPException(status_code=404, detail="Tag not found")
+    issue = db.query(models.Issue).filter(models.Issue.id == body.issue_id).first()
+    if not issue:
+        raise HTTPException(status_code=404, detail="Issue not found")
+    tag.issue_id = body.issue_id
+    tag.note = body.note
+    db.commit(); db.refresh(tag)
+    return tag
+
+
 @app.delete("/api/tags/{tag_id}")
 def delete_tag(tag_id: int, db: Session = Depends(get_db)):
     tag = db.query(models.Tag).filter(models.Tag.id == tag_id).first()

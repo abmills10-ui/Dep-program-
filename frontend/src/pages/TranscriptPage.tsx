@@ -3,7 +3,7 @@ import { Link, useParams } from "react-router-dom";
 import { Document, Page, pdfjs } from "react-pdf";
 import "react-pdf/dist/esm/Page/TextLayer.css";
 import {
-  getTags, createTag, deleteTag, getIssues,
+  getTags, createTag, updateTag, deleteTag, getIssues,
   getDepositions, getCase, depositionFileUrl,
 } from "../api";
 import type { Tag, Issue, Case, Deposition, HighlightRect } from "../types";
@@ -159,6 +159,60 @@ function extractRangeMultiPage(
   return { text: allText.join("\n"), rects: allRects };
 }
 
+function buildCitation(witnessName: string, depoDate: string, selectedText: string, rectsJson: string): string {
+  const lastName = witnessName.trim().split(/\s+/).pop() ?? witnessName;
+  let dateStr = "";
+  if (depoDate) {
+    const d = new Date(depoDate.includes("T") ? depoDate : depoDate + "T12:00:00");
+    if (!isNaN(d.getTime())) {
+      dateStr = d.toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" }).replace(/^(\w{3}) /, "$1. ");
+    } else {
+      dateStr = depoDate;
+    }
+  }
+  let rects: HighlightRect[] = [];
+  try { rects = JSON.parse(rectsJson); } catch { /* ignore */ }
+  const startPage = rects.length > 0 ? rects[0].pageIndex + 1 : null;
+  const endPage   = rects.length > 0 ? rects[rects.length - 1].pageIndex + 1 : null;
+  const lines = selectedText.split("\n").map(l => l.trim()).filter(Boolean);
+  const startLine = parseInt(lines[0]?.match(/^(\d+)/)?.[1] ?? "0") || null;
+  const endLine   = parseInt(lines[lines.length - 1]?.match(/^(\d+)/)?.[1] ?? "0") || null;
+  let pageRange = "";
+  if (startPage !== null && endPage !== null) {
+    pageRange = startPage === endPage
+      ? (startLine && endLine ? `${startPage}:${startLine}-${endLine}` : `${startPage}`)
+      : (startLine && endLine ? `${startPage}:${startLine}-${endPage}:${endLine}` : `${startPage}-${endPage}`);
+  }
+  return [lastName, dateStr, "Dep. Tr.", pageRange].filter(Boolean).join(" ");
+}
+
+function CopyButton({ text, style }: { text: string; style?: React.CSSProperties }) {
+  const [copied, setCopied] = useState(false);
+  const handle = (e: React.MouseEvent) => {
+    e.stopPropagation();
+    navigator.clipboard.writeText(text).then(() => {
+      setCopied(true);
+      setTimeout(() => setCopied(false), 2000);
+    });
+  };
+  return (
+    <button onClick={handle} title={copied ? "Copied!" : "Copy"} style={{
+      background: copied ? "#e8f5e9" : "rgba(255,255,255,0.92)",
+      border: "1px solid #ddd", borderRadius: "4px",
+      padding: ".18rem .38rem", cursor: "pointer",
+      display: "inline-flex", alignItems: "center", gap: ".25rem",
+      fontSize: ".7rem", color: copied ? "#2e7d32" : "#888",
+      boxShadow: "0 1px 3px rgba(0,0,0,.08)", flexShrink: 0,
+      ...style,
+    }}>
+      {copied
+        ? <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><polyline points="20 6 9 17 4 12" /></svg>
+        : <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><rect x="9" y="9" width="13" height="13" rx="2" /><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1" /></svg>
+      }
+      {copied ? "Copied" : "Copy"}
+    </button>
+  );
+}
 
 export default function TranscriptPage() {
   const { caseId, depId } = useParams<{ caseId: string; depId: string }>();
@@ -187,6 +241,11 @@ export default function TranscriptPage() {
 
   // Sidebar filter
   const [filterIssueId, setFilterIssueId] = useState<number | "">("");
+
+  // Edit tag modal
+  const [editingTag, setEditingTag]   = useState<Tag | null>(null);
+  const [editIssueId, setEditIssueId] = useState<number | "">("");
+  const [editNote, setEditNote]       = useState("");
 
   const loadAll = useCallback(async () => {
     const [c, deps, tgs, iss] = await Promise.all([
@@ -266,8 +325,36 @@ export default function TranscriptPage() {
   };
 
   const handleDeleteTag = async (tagId: number) => {
-    if (!confirm("Remove this highlight?")) return;
+    if (!confirm("Remove this highlight? This cannot be undone.")) return;
     await deleteTag(tagId);
+    setTags(await getTags(dId));
+  };
+
+  const navigateToTag = (tag: Tag) => {
+    let rects: HighlightRect[] = [];
+    try { rects = JSON.parse(tag.rects_json); } catch { return; }
+    if (rects.length === 0) return;
+    const el = pageRefs.current[rects[0].pageIndex];
+    if (!el) return;
+    const scrollArea = el.closest(".pdf-scroll-area") as HTMLElement | null;
+    if (scrollArea) {
+      const top = el.getBoundingClientRect().top - scrollArea.getBoundingClientRect().top + scrollArea.scrollTop;
+      scrollArea.scrollTo({ top: Math.max(0, top - 40), behavior: "smooth" });
+    } else {
+      el.scrollIntoView({ behavior: "smooth", block: "start" });
+    }
+  };
+
+  const openEditModal = (tag: Tag) => {
+    setEditingTag(tag);
+    setEditIssueId(tag.issue_id);
+    setEditNote(tag.note);
+  };
+
+  const handleSaveEdit = async () => {
+    if (!editingTag || editIssueId === "") return;
+    await updateTag(editingTag.id, Number(editIssueId), editNote.trim());
+    setEditingTag(null);
     setTags(await getTags(dId));
   };
 
@@ -489,22 +576,61 @@ export default function TranscriptPage() {
           {visibleTags.length === 0 && (
             <p style={{ fontSize: ".8rem", color: "#999", fontStyle: "italic" }}>No highlights yet.</p>
           )}
-          {visibleTags.map(tag => (
-            <div key={tag.id} className="tag-item" style={{ borderLeftColor: tag.issue.color, borderLeftWidth: 3 }}>
-              <div className="tag-item-body">
-                <div className="tag-item-label" style={{ color: tag.issue.color }}>{tag.issue.name}</div>
-                <div className="tag-item-note" style={{ color: "#444", marginTop: ".2rem", fontSize: ".8rem" }}>
-                  "{tag.selected_text.length > 100 ? tag.selected_text.slice(0, 100) + "…" : tag.selected_text}"
+          {visibleTags.map(tag => {
+            const citation = buildCitation(
+              deposition?.witness_name ?? "",
+              deposition?.deposition_date ?? "",
+              tag.selected_text,
+              tag.rects_json,
+            );
+            const copyText = citation ? `${citation}\n${tag.selected_text}` : tag.selected_text;
+            return (
+              <div
+                key={tag.id}
+                className="tag-item"
+                style={{ borderLeftColor: tag.issue.color, borderLeftWidth: 3, cursor: "pointer", flexDirection: "column", gap: 0 }}
+                onClick={() => navigateToTag(tag)}
+                title="Click to jump to this testimony"
+              >
+                {/* Top row: issue label + edit + delete */}
+                <div style={{ display: "flex", alignItems: "center", gap: ".3rem", width: "100%", marginBottom: ".3rem" }}>
+                  <span className="tag-item-label" style={{ color: tag.issue.color, flex: 1 }}>{tag.issue.name}</span>
+                  <button
+                    title="Edit"
+                    onClick={e => { e.stopPropagation(); openEditModal(tag); }}
+                    style={{ background: "none", border: "none", cursor: "pointer", color: "#aaa", padding: ".1rem .25rem", fontSize: ".78rem", lineHeight: 1 }}
+                  >
+                    <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                      <path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/>
+                      <path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/>
+                    </svg>
+                  </button>
+                  <button
+                    title="Delete highlight"
+                    onClick={e => { e.stopPropagation(); handleDeleteTag(tag.id); }}
+                    style={{ background: "none", border: "none", cursor: "pointer", color: "#aaa", padding: ".1rem .25rem", fontSize: ".82rem", lineHeight: 1 }}
+                  >✕</button>
                 </div>
-                {tag.note && <div className="tag-item-note" style={{ marginTop: ".3rem", color: "#888" }}>{tag.note}</div>}
+
+                {/* Citation row */}
+                {citation && (
+                  <div style={{ display: "flex", alignItems: "center", gap: ".35rem", marginBottom: ".3rem" }}>
+                    <span style={{ fontStyle: "italic", fontSize: ".73rem", color: "#777", flex: 1, lineHeight: 1.3 }}>{citation}</span>
+                    <CopyButton text={copyText} />
+                  </div>
+                )}
+
+                {/* Text preview */}
+                <div style={{ fontSize: ".78rem", color: "#444", lineHeight: 1.45, whiteSpace: "pre-wrap", wordBreak: "break-word" }}>
+                  {tag.selected_text.length > 120 ? tag.selected_text.slice(0, 120) + "…" : tag.selected_text}
+                </div>
+
+                {tag.note && (
+                  <div style={{ marginTop: ".3rem", fontSize: ".74rem", color: "#888", fontStyle: "italic" }}>{tag.note}</div>
+                )}
               </div>
-              <button
-                className="btn btn-ghost btn-sm"
-                style={{ padding: ".15rem .4rem", fontSize: ".75rem", alignSelf: "flex-start", flexShrink: 0 }}
-                onClick={() => handleDeleteTag(tag.id)}
-              >✕</button>
-            </div>
-          ))}
+            );
+          })}
         </div>
       </div>
 
@@ -581,6 +707,46 @@ export default function TranscriptPage() {
             <div className="modal-actions">
               <button className="btn btn-ghost" onClick={() => { setShowTagModal(false); clearAll(); }}>Cancel</button>
               <button className="btn btn-primary" onClick={handleSaveTag}>Save Highlight</button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ── Edit tag modal ── */}
+      {editingTag && (
+        <div className="modal-overlay" onClick={e => { if (e.target === e.currentTarget) setEditingTag(null); }}>
+          <div className="modal">
+            <div className="modal-title">Edit Highlight</div>
+            <div style={{
+              background: "#f5f5f3", border: "1px solid #ddd", borderRadius: 4,
+              padding: ".6rem .75rem", marginBottom: "1rem",
+              fontFamily: "'Courier New', Courier, monospace",
+              fontSize: ".82rem", color: "#333",
+              maxHeight: 120, overflow: "auto", lineHeight: 1.65, whiteSpace: "pre-wrap",
+            }}>
+              {editingTag.selected_text.length > 300 ? editingTag.selected_text.slice(0, 300) + "…" : editingTag.selected_text}
+            </div>
+            <div className="form-group">
+              <label>Issue</label>
+              <div style={{ display: "flex", flexWrap: "wrap", gap: ".5rem", marginTop: ".3rem" }}>
+                {issues.map(iss => (
+                  <button key={iss.id} onClick={() => setEditIssueId(iss.id)} style={{
+                    padding: ".35rem .75rem", borderRadius: 20,
+                    border: `2px solid ${iss.color}`,
+                    background: editIssueId === iss.id ? iss.color : "transparent",
+                    cursor: "pointer", fontWeight: 600, fontSize: ".82rem",
+                    color: editIssueId === iss.id ? "#000" : "#333",
+                  }}>{iss.name}</button>
+                ))}
+              </div>
+            </div>
+            <div className="form-group">
+              <label>Note (optional)</label>
+              <textarea value={editNote} onChange={e => setEditNote(e.target.value)} placeholder="Why is this testimony relevant?" style={{ minHeight: 70 }} />
+            </div>
+            <div className="modal-actions">
+              <button className="btn btn-ghost" onClick={() => setEditingTag(null)}>Cancel</button>
+              <button className="btn btn-primary" onClick={handleSaveEdit}>Save Changes</button>
             </div>
           </div>
         </div>

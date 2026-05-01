@@ -80,6 +80,12 @@ export const createTag = (
       note,
     }),
   });
+export const updateTag = (tagId: number, issueId: number, note: string) =>
+  request<Tag>(`/tags/${tagId}`, {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ issue_id: issueId, selected_text: "", rects_json: "[]", note }),
+  });
 export const deleteTag = (tagId: number) =>
   request<{ ok: boolean }>(`/tags/${tagId}`, { method: "DELETE" });
 
