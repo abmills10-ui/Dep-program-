@@ -1,7 +1,53 @@
 import { useEffect, useState } from "react";
 import { Link, useParams, useSearchParams } from "react-router-dom";
 import { getIssues, getReport, getCase } from "../api";
-import type { Issue, Report, Case } from "../types";
+import type { Issue, Report, Case, HighlightRect } from "../types";
+
+function buildCitation(witnessName: string, depoDate: string, selectedText: string, rectsJson: string): string {
+  // Last name only
+  const lastName = witnessName.trim().split(/\s+/).pop() ?? witnessName;
+
+  // Format date as "Mar. 27, 2024"
+  let dateStr = "";
+  if (depoDate) {
+    const d = new Date(depoDate.includes("T") ? depoDate : depoDate + "T12:00:00");
+    if (!isNaN(d.getTime())) {
+      const raw = d.toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" });
+      // "Mar 27, 2024" → "Mar. 27, 2024"
+      dateStr = raw.replace(/^(\w{3}) /, "$1. ");
+    } else {
+      dateStr = depoDate;
+    }
+  }
+
+  // Page numbers from rects (pageIndex is 0-based)
+  let rects: HighlightRect[] = [];
+  try { rects = JSON.parse(rectsJson); } catch { /* ignore */ }
+  const startPage = rects.length > 0 ? rects[0].pageIndex + 1 : null;
+  const endPage   = rects.length > 0 ? rects[rects.length - 1].pageIndex + 1 : null;
+
+  // Line numbers: each line of selected_text begins with its transcript line number
+  const lines = selectedText.split("\n").map(l => l.trim()).filter(Boolean);
+  const firstLineMatch = lines[0]?.match(/^(\d+)/);
+  const lastLineMatch  = lines[lines.length - 1]?.match(/^(\d+)/);
+  const startLine = firstLineMatch ? parseInt(firstLineMatch[1]) : null;
+  const endLine   = lastLineMatch  ? parseInt(lastLineMatch[1])  : null;
+
+  let pageRange = "";
+  if (startPage !== null && endPage !== null) {
+    if (startPage === endPage) {
+      pageRange = startLine && endLine
+        ? `${startPage}:${startLine}-${endLine}`
+        : `${startPage}`;
+    } else {
+      pageRange = startLine && endLine
+        ? `${startPage}:${startLine}-${endPage}:${endLine}`
+        : `${startPage}-${endPage}`;
+    }
+  }
+
+  return [lastName, dateStr, "Dep. Tr.", pageRange].filter(Boolean).join(" ");
+}
 
 export default function ReportPage() {
   const { caseId } = useParams<{ caseId: string }>();
@@ -163,6 +209,22 @@ export default function ReportPage() {
                           <strong>Note:</strong> {passage.note}
                         </div>
                       )}
+
+                      {/* Citation */}
+                      {(() => {
+                        const citation = buildCitation(passage.witness_name, passage.deposition_date, passage.selected_text, passage.rects_json);
+                        return citation ? (
+                          <div style={{
+                            fontFamily: "'Georgia', serif",
+                            fontStyle: "italic",
+                            fontSize: ".82rem",
+                            color: "#666",
+                            marginBottom: ".4rem",
+                          }}>
+                            {citation}
+                          </div>
+                        ) : null;
+                      })()}
 
                       {/* Verbatim highlighted text — transcript style */}
                       <div style={{

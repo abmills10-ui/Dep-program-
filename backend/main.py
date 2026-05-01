@@ -136,6 +136,7 @@ class ReportPassage(BaseModel):
     tag_id: int
     note: str
     selected_text: str
+    rects_json: str
 
 
 class ReportOut(BaseModel):
@@ -357,6 +358,7 @@ def get_report(case_id: int, issue_id: int, db: Session = Depends(get_db)):
             tag_id=tag.id,
             note=tag.note,
             selected_text=tag.selected_text,
+            rects_json=tag.rects_json,
         ))
 
     return ReportOut(issue=IssueOut.model_validate(issue), passages=passages)

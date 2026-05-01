@@ -50,6 +50,7 @@ export interface ReportPassage {
   tag_id: number;
   note: string;
   selected_text: string;
+  rects_json: string;
 }
 
 export interface Report {
