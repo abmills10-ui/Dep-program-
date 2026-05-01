@@ -1,11 +1,12 @@
 import json
 import os
+import traceback
 from datetime import datetime
 from typing import List, Optional
 
-from fastapi import FastAPI, Depends, HTTPException, UploadFile, File, Form
+from fastapi import FastAPI, Depends, HTTPException, UploadFile, File, Form, Request
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, JSONResponse
 from pydantic import BaseModel
 from sqlalchemy import text
 from sqlalchemy.orm import Session
@@ -14,7 +15,8 @@ import models
 from database import engine, get_db
 from transcript_parser import extract_text_from_pdf
 
-models.Base.metadata.create_all(bind=engine)
+# NOTE: do NOT call create_all here — the startup migration must run first
+# so it can fix any stale schema before SQLAlchemy tries to use tables.
 
 UPLOAD_DIR = "uploads"
 os.makedirs(UPLOAD_DIR, exist_ok=True)
@@ -30,26 +32,41 @@ app.add_middleware(
 )
 
 
+@app.exception_handler(Exception)
+async def unhandled_exception_handler(request: Request, exc: Exception):
+    tb = traceback.format_exc()
+    print(f"UNHANDLED EXCEPTION on {request.method} {request.url}:\n{tb}")
+    return JSONResponse(status_code=500, content={"detail": str(exc)})
+
+
 @app.on_event("startup")
 def migrate_db():
+    REQUIRED_TAG_COLS = {"id", "deposition_id", "issue_id", "selected_text", "rects_json", "note", "created_at"}
+
     with engine.connect() as conn:
-        # Check if tags table has the new schema (selected_text column)
+        # Drop tables whose schema is stale so create_all can rebuild them correctly.
         tag_cols = {row[1] for row in conn.execute(text("PRAGMA table_info(tags)"))}
-        if "selected_text" not in tag_cols:
-            # Old schema has NOT NULL segment index columns that block inserts.
-            # Drop and let create_all rebuild with the new schema.
+        if tag_cols and not REQUIRED_TAG_COLS.issubset(tag_cols):
+            print(f"[migrate] tags schema is stale (cols={tag_cols}), dropping and rebuilding")
             conn.execute(text("DROP TABLE IF EXISTS tags"))
             conn.execute(text("DROP TABLE IF EXISTS transcript_segments"))
             conn.commit()
+        elif not tag_cols:
+            # Table doesn't exist yet — that's fine, create_all will make it.
+            print("[migrate] tags table not found, will be created")
+        else:
+            print("[migrate] tags schema OK")
 
         # Add file_path to depositions if it doesn't exist yet
         dep_cols = {row[1] for row in conn.execute(text("PRAGMA table_info(depositions)"))}
-        if "file_path" not in dep_cols:
+        if dep_cols and "file_path" not in dep_cols:
+            print("[migrate] adding file_path column to depositions")
             conn.execute(text("ALTER TABLE depositions ADD COLUMN file_path TEXT DEFAULT ''"))
             conn.commit()
 
-    # Recreate any missing tables (no-op for tables that already exist)
+    # Create all tables that don't yet exist (including freshly-dropped ones)
     models.Base.metadata.create_all(bind=engine)
+    print("[migrate] database ready")
 
 
 # ── Schemas ───────────────────────────────────────────────────────────────────
