@@ -4,6 +4,9 @@ import traceback
 from datetime import datetime
 from typing import List, Optional
 
+from dotenv import load_dotenv
+load_dotenv()  # reads backend/.env if present
+
 import anthropic
 from fastapi import FastAPI, Depends, HTTPException, UploadFile, File, Form, Request
 from fastapi.middleware.cors import CORSMiddleware
